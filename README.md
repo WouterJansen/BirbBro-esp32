@@ -18,8 +18,8 @@ You can find more information on the Android app here: https://github.com/Wouter
 
 ## Dependencies 
  - Made with Arduino IDE.
- - Arduino core for the ESP32 (add the following board manager URL: https://dl.espressif.com/dl/package_esp32_index.json and install the esp32 package from the board manager.
- - Firebase Arduino Client Library for ESP8266 and ESP32 by Mobizt (v1.0.3)
+ - Arduino core for the ESP32 (add the following board manager URL: https://dl.espressif.com/dl/package_esp32_index.json and install the esp32 package from the board manager).
+ - Firebase Arduino Client Library for ESP8266 and ESP32 by Mobizt (v1.0.3).
 
 ##  Features
 
@@ -33,7 +33,7 @@ You can find more information on the Android app here: https://github.com/Wouter
   - Clean everything up and make usable. 
 
 ## Better sources
-  - Complete hardware configuration and basic software setup: https://randomnerdtutorials.com/esp32-cam-pir-motion-detector-photo-capture/
+  - Complete hardware configuration and basic software setup: https://randomnerdtutorials.com/esp32-cam-pir-motion-detector-photo-capture/. 
   
 ##  Usage
   - This requires a bit of a setup on the Firebase side, this will be documented later. 
