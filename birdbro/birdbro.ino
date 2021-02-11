@@ -34,7 +34,7 @@
 uint16_t nextImageNumber = 0;
 
 #define WIFI_SSID "YOUR_SSID"
-#define WIFI_PASSWORD "YOUR_PW"
+#define WIFI_PASSWORD "YOUR_WIFI_PW"
 #define FIREBASE_HOST "https://YOUR_HOSTNAME.ZONE.firebasedatabase.app"
 #define API_KEY "YOUR_API_KEY"
 #define FIREBASE_PROJECT_ID "YOUR_PROJECT_ID"
