@@ -6,6 +6,15 @@ BirdBro is an esp32 script to run on an AIThinker ESP32-CAM to use a PIR sensor 
 You can find more information on the Android app here: https://github.com/WouterJansen/BirbBro-app
 
 ## Hardware used
+ - 2x Samsung ICR18650-26 batteries Flat-top Li-ion 3.7 V 2550 mAh
+ - Dual 18650 Lithium Battery Shield V8 Mobile Power Expansion Board
+ - HC-SR505 Mini Infrared PIR Motion Sensor
+ - AIThinker ESP32-CAM
+ - LILYGO TTGO Camera Module OV2640 2 Megapixel 
+ - FT232RL FTDI USB To TTL Serial Converter Adapter Module
+ - 2N3904 transistor
+ - 1k and 10k resistors
+ - 16GB Micro SD card
 
 ## Dependencies 
  - Made with Arduino IDE.
@@ -22,6 +31,9 @@ You can find more information on the Android app here: https://github.com/Wouter
 ##  TODO
   - Upload the pictures.
   - Clean everything up and make usable. 
+
+## Better sources
+  - Complete hardware configuration and basic software setup: https://randomnerdtutorials.com/esp32-cam-pir-motion-detector-photo-capture/
   
 ##  Usage
   - This requires a bit of a setup on the Firebase side, this will be documented later. 
