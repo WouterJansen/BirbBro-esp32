@@ -17,23 +17,18 @@ You can find more information on the Android app here: https://github.com/Wouter
  - 16GB Micro SD card
 
 ## Dependencies 
- - Made with Arduino IDE.
  - Arduino core for the ESP32 (add the following board manager URL: https://dl.espressif.com/dl/package_esp32_index.json and install the esp32 package from the board manager).
- - Firebase Arduino Client Library for ESP8266 and ESP32 by Mobizt (v1.0.3).
+ - Firebase Arduino Client Library for ESP8266 and ESP32 by Mobizt (v1.0.3). Requires custom fork to work with SD_MMC: https://github.com/WouterJansen/Firebase-ESP-Client.
 
 ##  Features
-
   - Use the PIR sensor to wake from deep sleep.
-  - Use the camera to take a few pictures when out of deep sleep.
+  - Use the camera to take (a) picture(s) when coming out of deep sleep and stor them on the SD card.
   - Connect to Google Firebase.
-  - Send a notification though the Google Firebase to the connected Android phone app.
+  - Automatically upload the images to the Google Firebase Storage. 
+  - Get all connected Android phone apps by requesting the FCM tokens from the Google Firebase RTDB. 
+  - Send a notification though the Google Firebase to the connected Android phone apps.
 
-##  TODO
-  - Upload the pictures.
-  - Clean everything up and make usable. 
-
-## Better sources
+## Sources
   - Complete hardware configuration and basic software setup: https://randomnerdtutorials.com/esp32-cam-pir-motion-detector-photo-capture/. 
-  
-##  Usage
-  - This requires a bit of a setup on the Firebase side, this will be documented later. 
+  - Better hardware configuration and better software setup: https://www.instructables.com/Motion-Triggered-Image-Capture-and-Email/
+  - Examples from the Firebase Arduino Client Library for ESP8266 and ESP32 by Mobizt.

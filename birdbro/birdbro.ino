@@ -2,9 +2,8 @@
 #include "FS.h"
 #include "SPI.h"
 #include "SD_MMC.h"
-#include "EEPROM.h"
 #include "driver/rtc_io.h"
-
+#include "time.h"
 #include <WiFi.h>
 #include <Firebase_ESP_Client.h>
 
@@ -26,38 +25,39 @@
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-#define ID_ADDRESS            0x00
-#define COUNT_ADDRESS         0x01
-#define ID_BYTE               0xAA
-#define EEPROM_SIZE           0x0F
-
-uint16_t nextImageNumber = 0;
-
 #define WIFI_SSID "YOUR_SSID"
 #define WIFI_PASSWORD "YOUR_WIFI_PW"
 #define FIREBASE_HOST "https://YOUR_HOSTNAME.ZONE.firebasedatabase.app"
 #define API_KEY "YOUR_API_KEY"
 #define FIREBASE_PROJECT_ID "YOUR_PROJECT_ID"
 #define FIREBASE_CLIENT_EMAIL "YOUR_FIREBASE_CLIENT_EMAIL"
+#define STORAGE_BUCKET_ID "YOUR_STORAGE_BUCKET_ID.appspot.com"
 const char PRIVATE_KEY[] PROGMEM = "-----BEGIN PRIVATE KEY-----\nYOUR_PRIVATE_KEY\n-----END PRIVATE KEY-----\n";
-#define DEVICE_REGISTRATION_ID_TOKEN "FCM_TOKEN_OF_YOUR_ANDROID_PHONE"
+
 FirebaseData fbdo;
 FirebaseAuth auth;
 FirebaseConfig fbconfig;
-unsigned long lastTime = 0;
-int count = 0;
-void sendMessage();
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = 3600;
+const int   daylightOffset_sec = 3600;
+
+void gcsUploadCallback(UploadStatusInfo info);
+void goToSleep();
+unsigned long getTime();
+void sendFCMMessage(String token);
 
 void setup() 
 {
   Serial.begin(115200);
   Serial.println();
-  Serial.println("Booting...");
+  Serial.println("BIRDBRO Booting...");
 
-  pinMode(4, INPUT);              //GPIO for LED flash
+  // Set GPIO for LED Flash
+  pinMode(4, INPUT); 
   digitalWrite(4, LOW);
-  rtc_gpio_hold_dis(GPIO_NUM_4);  //diable pin hold if it was enabled before sleeping
+  rtc_gpio_hold_dis(GPIO_NUM_4); // Disable pin if it was enabled before sleep
   
+  // Configure camera
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -80,7 +80,6 @@ void setup()
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
   
-  //init with high specs to pre-allocate larger buffers
   if(psramFound())
   {
     config.frame_size = FRAMESIZE_UXGA;
@@ -93,131 +92,112 @@ void setup()
     config.fb_count = 1;
   }
 
-  //initialize camera
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) 
   {
-    Serial.printf("Camera init failed with error 0x%x", err);
-    return;
+    Serial.println();
+    Serial.println("------------------------------------");
+    Serial.println("CAMERA INITIALIZATION FAILED");
+    Serial.println("REASON: " + err);
+    Serial.println("------------------------------------");
+    Serial.println();
+    goToSleep();
   }
   
-  //set the camera parameters
+  // Set camera settings
   sensor_t * s = esp_camera_sensor_get();
   s->set_contrast(s, 2);    //min=-2, max=2
   s->set_brightness(s, 2);  //min=-2, max=2
   s->set_saturation(s, 2);  //min=-2, max=2
-  delay(100);               //wait a little for settings to take effect
+  delay(100);        
   
-  //initialize & mount SD card
+  // Mount SD Card
   if(!SD_MMC.begin())
   {
-    Serial.println("Card Mount Failed");
-    return;
+    Serial.println();
+    Serial.println("------------------------------------");
+    Serial.println("SD MOUNT FAILED");
+    Serial.println("------------------------------------");
+    Serial.println();
+    goToSleep();
   }
   
   uint8_t cardType = SD_MMC.cardType();
 
   if(cardType == CARD_NONE)
   {
-    Serial.println("No SD card attached");
-    return;
+    Serial.println();
+    Serial.println("------------------------------------");
+    Serial.println("NO SD CARD FOUND");
+    Serial.println("------------------------------------");
+    Serial.println();
+    goToSleep();
   }
-
-  //initialize EEPROM & get file number
-  if (!EEPROM.begin(EEPROM_SIZE))
-  {
-    Serial.println("Failed to initialise EEPROM"); 
-    Serial.println("Exiting now"); 
-    while(1);   //wait here as something is not right
-  }
-
-/*
-  EEPROM.get(COUNT_ADDRESS, nextImageNumber);
-  Serial.println(nextImageNumber);
-  nextImageNumber += 1;
-  EEPROM.put(COUNT_ADDRESS, nextImageNumber);
-  EEPROM.commit();
-  while(1);
-  */
   
-  /*ERASE EEPROM BYTES START*/
-  /*
-  Serial.println("Erasing EEPROM...");
-  for(int i = 0; i < EEPROM_SIZE; i++)
-  {
-    EEPROM.write(i, 0xFF);
-    EEPROM.commit();
-    delay(20);
-  }
-  Serial.println("Erased");
-  while(1);
-  */
-  /*ERASE EEPROM BYTES END*/  
-
-  if(EEPROM.read(ID_ADDRESS) != ID_BYTE)    //there will not be a valid picture number
-  {
-    Serial.println("Initializing ID byte & restarting picture count");
-    nextImageNumber = 0;
-    EEPROM.write(ID_ADDRESS, ID_BYTE);  
-    EEPROM.commit(); 
-  }
-  else                                      //obtain next picture number
-  {
-    EEPROM.get(COUNT_ADDRESS, nextImageNumber);
-    nextImageNumber +=  1;    
-    Serial.print("Next image number:");
-    Serial.println(nextImageNumber);
-  }
-
-  //take new image
+    // Take image
+  Serial.print("Taking image...");
   camera_fb_t * fb = NULL;
-  //obtain camera frame buffer
   fb = esp_camera_fb_get();
   if (!fb) 
   {
-    Serial.println("Camera capture failed");
-    Serial.println("Exiting now"); 
-    while(1);   //wait here as something is not right
+    Serial.println();
+    Serial.println("------------------------------------");
+    Serial.println("CAMERA CAPTURE FAILED");
+    Serial.println("------------------------------------");
+    Serial.println();
+    goToSleep();
   }
 
-  //save to SD card
-  //generate file path
-  String path = "/IMG" + String(nextImageNumber) + ".jpg";
-    
-  fs::FS &fs = SD_MMC;
-
-  //create new file
-  File file = fs.open(path.c_str(), FILE_WRITE);
-  if(!file)
-  {
-    Serial.println("Failed to create file");
-    Serial.println("Exiting now"); 
-    while(1);   //wait here as something is not right    
-  } 
-  else 
-  {
-    file.write(fb->buf, fb->len); 
-    EEPROM.put(COUNT_ADDRESS, nextImageNumber);
-    EEPROM.commit();
-  }
-  file.close();
-
-  //return camera frame buffer
-  esp_camera_fb_return(fb);
-  Serial.printf("Image saved: %s\n", path.c_str());
-
-
+    // Connect to Wi-Fi
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.print("Connecting to Wi-Fi");
+  Serial.println();
+  Serial.print("Connecting to Wi-Fi...");
+  int failedCounter = 0;
+  
   while (WiFi.status() != WL_CONNECTED)
   {
       Serial.print(".");
       delay(300);
+      failedCounter = failedCounter + 1;
+      if(failedCounter == 20){
+        Serial.println();
+        Serial.println("------------------------------------");
+        Serial.println("CONNECTING TO WI-FI FAILED");
+        Serial.println("------------------------------------");
+        Serial.println();
+        goToSleep();
+      }
+  } 
+
+  // Store image on SD card using epoch timestamp as name
+  Serial.println();
+  Serial.print("Storing image on SD card...");
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  unsigned long timestamp = getTime();
+  String path = "/" + String(timestamp) + ".jpg";
+  String onlinePath = String(timestamp) + ".jpg";
+  fs::FS &fs = SD_MMC;
+  File file = fs.open(path.c_str(), FILE_WRITE);
+  if(!file)
+  {
+    Serial.println();
+    Serial.println("------------------------------------");
+    Serial.println("WRITING IMAGE FILE FAILED");
+    Serial.println("------------------------------------");
+    Serial.println();
+    return;
   }
+  file.write(fb->buf, fb->len); 
+  file.close();
+  esp_camera_fb_return(fb);
   Serial.println();
-  Serial.print("Connected with IP: ");
-  Serial.println(WiFi.localIP());
+  Serial.println("------------------------------------");
+  Serial.println("WRITING IMAGE FILE PASSED");
+  Serial.println("IMAGE NAME: " + path);
+  Serial.println("------------------------------------");
   Serial.println();
+  
+  // Connect to Google Firebase
   fbconfig.host = FIREBASE_HOST;
   fbconfig.api_key = API_KEY;
   fbconfig.service_account.data.client_email = FIREBASE_CLIENT_EMAIL;
@@ -226,17 +206,46 @@ void setup()
   Firebase.begin(&fbconfig, &auth);
   Firebase.reconnectWiFi(true);
   fbdo.setResponseSize(1024);
-  sendMessage();
-    
 
-  pinMode(4, OUTPUT);              //GPIO for LED flash
-  digitalWrite(4, LOW);            //turn OFF flash LED
-  rtc_gpio_hold_en(GPIO_NUM_4);    //make sure flash is held LOW in sleep
-  Serial.println("Entering deep sleep mode");
-  Serial.flush(); 
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_13, 0);   //wake up when pin 13 goes LOW
-  delay(3000);                                    //wait for 3 seconds to let PIR sensor settle
-  esp_deep_sleep_start();
+  // Read image from SD and store it on Firebase Storage
+  Serial.println();
+  Serial.print("Storing image on Firebase Storage...");
+  Firebase.GCStorage.upload(&fbdo, STORAGE_BUCKET_ID, path.c_str(), mem_storage_type_sd, gcs_upload_type_resumable, onlinePath.c_str(), "image/jpeg", nullptr, nullptr, nullptr, gcsUploadCallback);
+
+  // Read Firebase RTDB for all registered FCM tokens and send each one a notification
+  Serial.print("Sending out notifications to all registered FCM token holders...");
+  if(Firebase.RTDB.get(&fbdo, "/fcm"))
+  {
+        if (fbdo.dataType() == "json")
+        {
+          Serial.println();
+          Serial.println("------------------------------------");
+          Serial.println("GETTING FCM TOKENS FROM RTDB PASSED");
+          Serial.println("------------------------------------");
+          Serial.println();
+          FirebaseJson &json = fbdo.jsonObject();
+          size_t len = json.iteratorBegin();
+          String key, value = "";
+          int type = 0;
+          for (size_t i = 0; i < len; i++)
+          {
+              json.iteratorGet(i, type, key, value);
+              sendFCMMessage(value);
+          }
+          json.iteratorEnd();
+        }
+
+  }else{
+    Serial.println();
+    Serial.println("------------------------------------");
+    Serial.println("GETTING FCM TOKENS FROM RTDB FAILED");
+    Serial.println("REASON: " + fbdo.errorReason());
+    Serial.println("------------------------------------");
+    Serial.println();
+  }
+
+  // Go back into deep sleep mode until device is waked by GPIO pin 13 by the PIR sensor
+  goToSleep();
 }
 
 void loop() 
@@ -245,45 +254,96 @@ void loop()
 
 }
 
-void sendMessage()
+// Callback for Firebase Storage upload
+void gcsUploadCallback(UploadStatusInfo info)
 {
+    if (info.status == fb_esp_gcs_upload_status_complete)
+    {
+        Serial.println();
+        Serial.println("------------------------------------");
+        Serial.println("FILE UPLOAD PASSED");
+        FileMetaInfo meta = fbdo.metaData();
+        Serial.println("FILENAME: " + meta.name.c_str());
+        Serial.println("------------------------------------");
+        Serial.println();
+    }
+    else if (info.status == fb_esp_gcs_upload_status_error)
+    {
+        Serial.println();
+        Serial.println("------------------------------------");
+        Serial.println("FILE UPLOAD FAILED");
+        Serial.println("REASON: " + info.errorMsg.c_str());
+        Serial.println("------------------------------------");
+        Serial.println();
+    }
+}
 
+// All elements to perform before going back to dep sleep mode
+void goToSleep(){
+  Serial.println();
+  Serial.println("Entering deep sleep mode...");
+
+  // Disable Wi-Fi
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+
+  // Set GPIO pin for LED Flash back to OFF
+  pinMode(4, OUTPUT);         
+  digitalWrite(4, LOW);     
+  rtc_gpio_hold_en(GPIO_NUM_4);  // Make sure it is set LOW during sleep 
+
+  // Flush serial connection
+  Serial.flush(); 
+
+  // Set deep sleep mode to wake up when GPIO pin 13 goes LOW 
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_13, 0);
+
+  // Sleep after short delay
+  delay(3000);      
+  esp_deep_sleep_start();
+}
+
+// Get epoch timestamp from NTP server
+unsigned long getTime() {
+  time_t now;
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    Serial.println();
     Serial.println("------------------------------------");
-    Serial.println("Send Firebase Cloud Messaging...");
+    Serial.println("GETTING TIME FAILED");
+    Serial.println("------------------------------------");
+    Serial.println();
+    return(0);
+  }
+  time(&now);
+  return now;
+}
 
-    //Read more details about HTTP v1 API here https://firebase.google.com/docs/reference/fcm/rest/v1/projects.messages
+// Send a Google Firebase message to a registered FCM token device
+void sendFCMMessage(String token)
+{
     FCM_HTTPv1_JSON_Message msg;
-
-    msg.token = DEVICE_REGISTRATION_ID_TOKEN;
-
-    msg.notification.body = "Notification body";
-    msg.notification.title = "Notification title";
-
+    msg.token = token.c_str();
+    msg.notification.body = "Check it out now in BirbBro";
+    msg.notification.title = "New Birb friend spotted!";
     FirebaseJson json;
     String payload;
 
-    //all data key-values should be string
-    json.add("temp", "28");
-    json.add("unit", "celsius");
-    json.add("timestamp", "1609815454");
-    json.toString(payload);
-    msg.data = payload.c_str();
-
-    if (Firebase.FCM.send(&fbdo, &msg)) //send message to recipient
+    if (Firebase.FCM.send(&fbdo, &msg)) 
     {
-
-        Serial.println("PASSED");
-        Serial.println(Firebase.FCM.payload(&fbdo));
+        Serial.println("------------------------------------");
+        Serial.println("FCM MESSAGE SEND PASSED");
+        Serial.println("TOKEN: " + token);
         Serial.println("------------------------------------");
         Serial.println();
     }
     else
     {
-        Serial.println("FAILED");
+        Serial.println("------------------------------------");
+        Serial.println("FCM MESSAGE SEND FAILED");
+        Serial.println("TOKEN: " + token);
         Serial.println("REASON: " + fbdo.errorReason());
         Serial.println("------------------------------------");
         Serial.println();
     }
-
-    count++;
 }
