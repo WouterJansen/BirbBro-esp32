@@ -12,9 +12,12 @@ You can find more information on the Android app here: https://github.com/Wouter
  - AIThinker ESP32-CAM
  - LILYGO TTGO Camera Module OV2640 2 Megapixel 
  - FT232RL FTDI USB To TTL Serial Converter Adapter Module
- - 2N3904 transistor
  - 1k and 10k resistors
  - 16GB Micro SD card
+
+## Diagram
+![Diagram](https://i.imgur.com/52hLvWS.png)
+
 
 ## Dependencies 
  - Arduino core for the ESP32 (add the following board manager URL: https://dl.espressif.com/dl/package_esp32_index.json and install the esp32 package from the board manager).
@@ -29,6 +32,5 @@ You can find more information on the Android app here: https://github.com/Wouter
   - Send a notification though the Google Firebase to the connected Android phone apps.
 
 ## Sources
-  - Complete hardware configuration and basic software setup: https://randomnerdtutorials.com/esp32-cam-pir-motion-detector-photo-capture/. 
-  - Better hardware configuration and better software setup: https://www.instructables.com/Motion-Triggered-Image-Capture-and-Email/
+  - Complete hardware configuration and basic software setup (uses different hardware diagram!): https://randomnerdtutorials.com/esp32-cam-pir-motion-detector-photo-capture/ & https://www.instructables.com/Motion-Triggered-Image-Capture-and-Email/
   - Examples from the Firebase Arduino Client Library for ESP8266 and ESP32 by Mobizt.
