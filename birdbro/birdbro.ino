@@ -5,6 +5,8 @@
 #include "driver/rtc_io.h"
 #include "time.h"
 #include <WiFi.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 #include <Firebase_ESP_Client.h>
 
 #define PWDN_GPIO_NUM     32
@@ -48,7 +50,9 @@ void sendFCMMessage(String token);
 
 void setup() 
 {
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
   Serial.begin(115200);
+  Serial.setDebugOutput(true);
   Serial.println();
   Serial.println("BIRDBRO Booting...");
 
@@ -211,7 +215,8 @@ void setup()
   Serial.println();
   Serial.print("Storing image on Firebase Storage...");
   Firebase.GCStorage.upload(&fbdo, STORAGE_BUCKET_ID, path.c_str(), mem_storage_type_sd, gcs_upload_type_resumable, onlinePath.c_str(), "image/jpeg", nullptr, nullptr, nullptr, gcsUploadCallback);
-
+  delay(10000);   
+    
   // Read Firebase RTDB for all registered FCM tokens and send each one a notification
   Serial.print("Sending out notifications to all registered FCM token holders...");
   if(Firebase.RTDB.get(&fbdo, "/fcm"))
@@ -263,7 +268,7 @@ void gcsUploadCallback(UploadStatusInfo info)
         Serial.println("------------------------------------");
         Serial.println("FILE UPLOAD PASSED");
         FileMetaInfo meta = fbdo.metaData();
-        Serial.println("FILENAME: " + meta.name.c_str());
+        Serial.printf("FILENAME: %s\n", meta.name.c_str());
         Serial.println("------------------------------------");
         Serial.println();
     }
@@ -272,7 +277,7 @@ void gcsUploadCallback(UploadStatusInfo info)
         Serial.println();
         Serial.println("------------------------------------");
         Serial.println("FILE UPLOAD FAILED");
-        Serial.println("REASON: " + info.errorMsg.c_str());
+        Serial.printf("REASON: %s\n", info.errorMsg.c_str());
         Serial.println("------------------------------------");
         Serial.println();
     }
@@ -295,11 +300,13 @@ void goToSleep(){
   // Flush serial connection
   Serial.flush(); 
 
-  // Set deep sleep mode to wake up when GPIO pin 13 goes LOW 
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_13, 0);
+  // Set deep sleep mode to wake up when GPIO pin 13 goes HIGH 
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_13, 1);
 
   // Sleep after short delay
-  delay(3000);      
+  delay(10000);   
+  Serial.println();
+  Serial.println("Bye!");   
   esp_deep_sleep_start();
 }
 
