@@ -1,4 +1,5 @@
 #include "esp_camera.h"
+#include <Arduino.h>
 #include "FS.h"
 #include "SPI.h"
 #include "SD_MMC.h"
@@ -8,6 +9,13 @@
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 #include <Firebase_ESP_Client.h>
+#include <nvs.h>
+#include <nvs_flash.h>
+#include <ArduinoJson.h>
+#include <BLEServer.h>
+#include <BLEDevice.h>
+#include <BLEAdvertising.h>
+#include <Preferences.h>
 
 #define PWDN_GPIO_NUM     32
 #define RESET_GPIO_NUM    -1
@@ -43,24 +51,195 @@ const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
 
+#define SERVICE_UUID  "0000aaaa-ead2-11e7-80c1-9a214cf093ae"
+#define WIFI_UUID     "00005555-ead2-11e7-80c1-9a214cf093ae"
+
+char apName[] = "BIRBBRO-xxxxxxxxxxxx";
+bool hasCredentials = false;
+bool BLEActivated = false;
+
+String bleWiFiSSID;
+String bleWiFiPassword;
+
+BLECharacteristic *pCharacteristicWiFi;
+BLEAdvertising* pAdvertising;
+BLEService *pService;
+BLEServer *pServer;
+
+StaticJsonBuffer<200> jsonBuffer;
+
 void gcsUploadCallback(UploadStatusInfo info);
 void goToSleep();
 unsigned long getTime();
 void sendFCMMessage(String token);
+void createName();
+
+class MyServerCallbacks: public BLEServerCallbacks {
+  // TODO this doesn't take into account several clients being connected
+  void onConnect(BLEServer* pServer) {
+    Serial.println("BLE client connected");
+  };
+
+  void onDisconnect(BLEServer* pServer) {
+    Serial.println("BLE client disconnected");
+    pAdvertising->start();
+  }
+};
+
+class MyCallbackHandler: public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    std::string value = pCharacteristic->getValue();
+    if (value.length() == 0) {
+      return;
+    }
+    Serial.println("Received over BLE: " + String((char *)&value[0]));
+
+    int keyIndex = 0;
+    for (int index = 0; index < value.length(); index ++) {
+      value[index] = (char) value[index] ^ (char) apName[keyIndex];
+      keyIndex++;
+      if (keyIndex >= strlen(apName)) keyIndex = 0;
+    }
+
+    JsonObject& jsonIn = jsonBuffer.parseObject((char *)&value[0]);
+    if (jsonIn.success()) {
+      if (jsonIn.containsKey("ssid") &&
+          jsonIn.containsKey("pw") && 
+          jsonIn.containsKey("ssidSec")) {
+        bleWiFiSSID = jsonIn["ssid"].as<String>();
+        bleWiFiPassword = jsonIn["pw"].as<String>();
+
+        Preferences preferences;
+        preferences.begin("WiFiCred", false);
+        preferences.putString("ssid", bleWiFiSSID);
+        preferences.putString("pw", bleWiFiPassword);
+        preferences.putBool("valid", true);
+        preferences.end();
+
+        Serial.println("Received over bluetooth:");
+        Serial.println("SSID: " + bleWiFiSSID + " password: " + bleWiFiPassword);
+        hasCredentials = true;
+      } 
+    } else {
+      Serial.println("Received invalid JSON");
+    }
+    jsonBuffer.clear();
+  };
+
+  void onRead(BLECharacteristic *pCharacteristic) {
+    Serial.println("BLE onRead request");
+    String wifiCredentials;
+    JsonObject& jsonOut = jsonBuffer.createObject();
+    jsonOut["ssid"] = bleWiFiSSID;
+    jsonOut["pw"] = bleWiFiPassword;
+
+    jsonOut.printTo(wifiCredentials);
+
+    int keyIndex = 0;
+    Serial.println("Stored settings: " + wifiCredentials);
+    for (int index = 0; index < wifiCredentials.length(); index ++) {
+      wifiCredentials[index] = (char) wifiCredentials[index] ^ (char) apName[keyIndex];
+      keyIndex++;
+      if (keyIndex >= strlen(apName)) keyIndex = 0;
+    }
+    pCharacteristicWiFi->setValue((uint8_t*)&wifiCredentials[0],wifiCredentials.length());
+    jsonBuffer.clear();
+  }
+};
+
+void initBLE() {
+  // Initialize BLE and set output power
+  BLEDevice::init(apName);
+  BLEDevice::setPower(ESP_PWR_LVL_P7);
+
+  // Create BLE Server
+  pServer = BLEDevice::createServer();
+
+  // Set server callbacks
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  // Create BLE Service
+  pService = pServer->createService(BLEUUID(SERVICE_UUID),20);
+
+  // Create BLE Characteristic for WiFi settings
+  pCharacteristicWiFi = pService->createCharacteristic(
+    BLEUUID(WIFI_UUID),
+    // WIFI_UUID,
+    BLECharacteristic::PROPERTY_READ |
+    BLECharacteristic::PROPERTY_WRITE
+  );
+  pCharacteristicWiFi->setCallbacks(new MyCallbackHandler());
+
+  // Start the service
+  pService->start();
+
+  // Start advertising
+  pAdvertising = pServer->getAdvertising();
+  pAdvertising->start();
+}
+
+void stopBLE() {
+  pAdvertising->stop();
+  pService->stop();
+  BLEDevice::deinit(true);
+}
 
 void setup() 
 {
-  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
+  // Disable brownout detector and set Serial output
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); 
   Serial.begin(115200);
   Serial.setDebugOutput(true);
   Serial.println();
   Serial.println("BIRDBRO Booting...");
 
+  createName();
+
+  Preferences preferences;
+  preferences.begin("WiFiCred", false);
+  bool hasPref = preferences.getBool("valid", false);
+  if (hasPref) {
+    bleWiFiSSID = preferences.getString("ssid","");
+    bleWiFiPassword = preferences.getString("pw","");
+
+    if (bleWiFiSSID.equals("") 
+        || bleWiFiPassword.equals("")) {
+      Serial.println("Found preferences but credentials are invalid");
+    } else {
+      Serial.println("Read from preferences:");
+      Serial.println("SSID: " + bleWiFiSSID + " password: " + bleWiFiPassword);
+      hasCredentials = true;
+    }
+  } else {
+    Serial.println("Could not find preferences, need send data over BLE");
+  }
+  preferences.end();
+
+  if(!hasCredentials){
+    initBLE();
+    BLEActivated = true;
+  } 
+  
+  while(!hasCredentials){
+    delay(300);
+    Preferences preferences;
+    preferences.begin("WiFiCred", false);
+    preferences.putString("ssid", WIFI_SSID);
+    preferences.putString("pw", WIFI_PASSWORD);
+    preferences.putBool("valid", true);
+    preferences.end();
+    hasCredentials = true;
+  }
+
+  if(BLEActivated){
+      stopBLE();
+  }
+
   // Set GPIO for LED Flash
   pinMode(4, INPUT); 
   digitalWrite(4, LOW);
   rtc_gpio_hold_dis(GPIO_NUM_4); // Disable pin if it was enabled before sleep
-  
+
   // Configure camera
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -83,7 +262,7 @@ void setup()
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  
+
   if(psramFound())
   {
     config.frame_size = FRAMESIZE_UXGA;
@@ -107,8 +286,8 @@ void setup()
     Serial.println();
     goToSleep();
   }
-  
-  // Set camera settings
+
+  // Set camera capture settings
   sensor_t * s = esp_camera_sensor_get();
   s->set_contrast(s, 2);    //min=-2, max=2
   s->set_brightness(s, 2);  //min=-2, max=2
@@ -138,7 +317,7 @@ void setup()
     goToSleep();
   }
   
-    // Take image
+  // Take image
   Serial.print("Taking image...");
   camera_fb_t * fb = NULL;
   fb = esp_camera_fb_get();
@@ -152,7 +331,10 @@ void setup()
     goToSleep();
   }
 
-    // Connect to Wi-Fi
+  // Connect to Wi-Fi
+    WiFi.disconnect(true);
+  WiFi.enableSTA(true);
+  WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.println();
   Serial.print("Connecting to Wi-Fi...");
@@ -249,7 +431,7 @@ void setup()
     Serial.println();
   }
 
-  // Go back into deep sleep mode until device is waked by GPIO pin 13 by the PIR sensor
+  // Go back into deep sleep mode until device is waked by GPIO pin 13 by the PIR sensor making this pin HIGH
   goToSleep();
 }
 
@@ -262,7 +444,15 @@ void loop()
 // Callback for Firebase Storage upload
 void gcsUploadCallback(UploadStatusInfo info)
 {
-    if (info.status == fb_esp_gcs_upload_status_complete)
+    if (info.status == fb_esp_gcs_upload_status_init)
+    {
+        Serial.printf("Uploading file %s to %s\n", info.localFileName.c_str(), info.remoteFileName.c_str());
+    }
+    else if (info.status == fb_esp_gcs_upload_status_upload)
+    {
+        Serial.printf("Uploaded %d%s\n", (int)info.progress, "%");
+    }
+    else if (info.status == fb_esp_gcs_upload_status_complete)
     {
         Serial.println();
         Serial.println("------------------------------------");
@@ -353,4 +543,12 @@ void sendFCMMessage(String token)
         Serial.println("------------------------------------");
         Serial.println();
     }
+}
+
+void createName() {
+  uint8_t baseMac[6];
+  // Get MAC address
+  esp_read_mac(baseMac, ESP_MAC_WIFI_STA);
+  // Write unique name into apName
+  sprintf(apName, "BIRBBRO-%02X%02X%02X%02X%02X%02X", baseMac[0], baseMac[1], baseMac[2], baseMac[3], baseMac[4], baseMac[5]);
 }
