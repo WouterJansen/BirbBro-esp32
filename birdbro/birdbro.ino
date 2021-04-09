@@ -2,6 +2,7 @@
 #include "FS.h"
 #include "SPI.h"
 #include "SD_MMC.h"
+#include "SPIFFS.h"
 #include "driver/rtc_io.h"
 #include "time.h"
 #include <WiFi.h>
@@ -27,6 +28,7 @@
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
+#define STORAGE_FOLDER "berchem"
 #define WIFI_SSID "YOUR_SSID"
 #define WIFI_PASSWORD "YOUR_WIFI_PW"
 #define FIREBASE_HOST "https://YOUR_HOSTNAME.ZONE.firebasedatabase.app"
@@ -42,6 +44,7 @@ FirebaseConfig fbconfig;
 const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
+bool storageDone = false;
 
 void gcsUploadCallback(UploadStatusInfo info);
 void goToSleep();
@@ -55,6 +58,11 @@ void setup()
   Serial.setDebugOutput(true);
   Serial.println();
   Serial.println("BIRDBRO Booting...");
+
+  if(!SPIFFS.begin(true)){
+        Serial.println("SPIFFS Mount Failed");
+        return;
+  }
 
   // Set GPIO for LED Flash
   pinMode(4, INPUT); 
@@ -169,7 +177,7 @@ void setup()
         Serial.println("CONNECTING TO WI-FI FAILED");
         Serial.println("------------------------------------");
         Serial.println();
-        goToSleep();
+        ESP.restart();
       }
   } 
 
@@ -179,7 +187,7 @@ void setup()
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   unsigned long timestamp = getTime();
   String path = "/" + String(timestamp) + ".jpg";
-  String onlinePath = String(timestamp) + ".jpg";
+  String onlinePath = String(STORAGE_FOLDER) + "/" + String(timestamp) + ".jpg";
   fs::FS &fs = SD_MMC;
   File file = fs.open(path.c_str(), FILE_WRITE);
   if(!file)
@@ -215,39 +223,54 @@ void setup()
   Serial.println();
   Serial.print("Storing image on Firebase Storage...");
   Firebase.GCStorage.upload(&fbdo, STORAGE_BUCKET_ID, path.c_str(), mem_storage_type_sd, gcs_upload_type_resumable, onlinePath.c_str(), "image/jpeg", nullptr, nullptr, nullptr, gcsUploadCallback);
-  delay(10000);   
+  delay(10000);
+
+  int counter = 0;
+  while(!storageDone && counter != 20){
+    delay(1000);
+    counter = counter + 1;
+  }
     
   // Read Firebase RTDB for all registered FCM tokens and send each one a notification
   Serial.print("Sending out notifications to all registered FCM token holders...");
-  if(Firebase.RTDB.get(&fbdo, "/fcm"))
-  {
-        if (fbdo.dataType() == "json")
-        {
-          Serial.println();
-          Serial.println("------------------------------------");
-          Serial.println("GETTING FCM TOKENS FROM RTDB PASSED");
-          Serial.println("------------------------------------");
-          Serial.println();
-          FirebaseJson &json = fbdo.jsonObject();
-          size_t len = json.iteratorBegin();
-          String key, value = "";
-          int type = 0;
-          for (size_t i = 0; i < len; i++)
+  String fcmTopic = "/" + String(STORAGE_FOLDER);
+  if(storageDone){
+    if(Firebase.RTDB.get(&fbdo, fcmTopic.c_str()))
+    {
+          if (fbdo.dataType() == "json")
           {
-              json.iteratorGet(i, type, key, value);
-              sendFCMMessage(value);
-          }
-          json.iteratorEnd();
-        }
-
+            Serial.println();
+            Serial.println("------------------------------------");
+            Serial.println("GETTING FCM TOKENS FROM RTDB PASSED");
+            Serial.println("------------------------------------");
+            Serial.println();
+            FirebaseJson &json = fbdo.jsonObject();
+            size_t len = json.iteratorBegin();
+            String key, value = "";
+            int type = 0;
+            for (size_t i = 0; i < len; i++)
+            {
+                json.iteratorGet(i, type, key, value);
+                sendFCMMessage(value);
+            }
+            json.iteratorEnd();
+          }  
+    }else{
+      Serial.println();
+      Serial.println("------------------------------------");
+      Serial.println("GETTING FCM TOKENS FROM RTDB FAILED");
+      Serial.println("REASON: " + fbdo.errorReason());
+      Serial.println("------------------------------------");
+      Serial.println();
+    }
   }else{
-    Serial.println();
-    Serial.println("------------------------------------");
-    Serial.println("GETTING FCM TOKENS FROM RTDB FAILED");
-    Serial.println("REASON: " + fbdo.errorReason());
-    Serial.println("------------------------------------");
-    Serial.println();
+      Serial.println();
+      Serial.println("------------------------------------");
+      Serial.println("STORAGE TIMED OUT");
+      Serial.println("------------------------------------");
+      Serial.println();
   }
+  
 
   // Go back into deep sleep mode until device is waked by GPIO pin 13 by the PIR sensor
   goToSleep();
@@ -262,7 +285,11 @@ void loop()
 // Callback for Firebase Storage upload
 void gcsUploadCallback(UploadStatusInfo info)
 {
-    if (info.status == fb_esp_gcs_upload_status_complete)
+    if (info.status == fb_esp_gcs_upload_status_upload)
+    {
+        Serial.printf("Uploaded %d%s\n", (int)info.progress, "%");
+    }
+    else if (info.status == fb_esp_gcs_upload_status_complete)
     {
         Serial.println();
         Serial.println("------------------------------------");
@@ -271,6 +298,7 @@ void gcsUploadCallback(UploadStatusInfo info)
         Serial.printf("FILENAME: %s\n", meta.name.c_str());
         Serial.println("------------------------------------");
         Serial.println();
+        storageDone = true;
     }
     else if (info.status == fb_esp_gcs_upload_status_error)
     {
