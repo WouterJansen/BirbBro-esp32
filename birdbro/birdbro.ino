@@ -28,7 +28,7 @@
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-#define STORAGE_FOLDER "berchem"
+#define STORAGE_FOLDER "default"
 #define WIFI_SSID "YOUR_SSID"
 #define WIFI_PASSWORD "YOUR_WIFI_PW"
 #define FIREBASE_HOST "https://YOUR_HOSTNAME.ZONE.firebasedatabase.app"
@@ -160,7 +160,7 @@ void setup()
     goToSleep();
   }
 
-    // Connect to Wi-Fi
+  // Connect to Wi-Fi
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.println();
   Serial.print("Connecting to Wi-Fi...");
@@ -219,11 +219,12 @@ void setup()
   Firebase.reconnectWiFi(true);
   fbdo.setResponseSize(1024);
 
+
   // Read image from SD and store it on Firebase Storage
   Serial.println();
-  Serial.print("Storing image on Firebase Storage...");
+  Serial.print("Storing image on Firebase Storage...\n");
+
   Firebase.GCStorage.upload(&fbdo, STORAGE_BUCKET_ID, path.c_str(), mem_storage_type_sd, gcs_upload_type_resumable, onlinePath.c_str(), "image/jpeg", nullptr, nullptr, nullptr, gcsUploadCallback);
-  delay(10000);
 
   int counter = 0;
   while(!storageDone && counter != 20){
@@ -232,9 +233,9 @@ void setup()
   }
     
   // Read Firebase RTDB for all registered FCM tokens and send each one a notification
-  Serial.print("Sending out notifications to all registered FCM token holders...");
-  String fcmTopic = "/" + String(STORAGE_FOLDER);
   if(storageDone){
+    Serial.print("Sending out notifications to all registered FCM token holders...");
+    String fcmTopic = "/" + String(STORAGE_FOLDER);
     if(Firebase.RTDB.get(&fbdo, fcmTopic.c_str()))
     {
           if (fbdo.dataType() == "json")
@@ -269,11 +270,11 @@ void setup()
       Serial.println("STORAGE TIMED OUT");
       Serial.println("------------------------------------");
       Serial.println();
-  }
-  
+  }       
 
   // Go back into deep sleep mode until device is waked by GPIO pin 13 by the PIR sensor
   goToSleep();
+  
 }
 
 void loop() 
